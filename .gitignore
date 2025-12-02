@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# virtualenv
+.venv/
+.env
+
+# OS
+.DS_Store
+
+# logs
+*.log
+
+# experiment outputs
+out/
+mlruns/
+
+# data (生データはGitに入れない)
+data/

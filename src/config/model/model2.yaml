@@ -1,0 +1,15 @@
+input_file: "21_01.amc.4d"
+init_n_rgm: 4
+noise_scale: 0
+h: 4
+window: 3
+svd_threshold: 0.995
+init_window: 80
+step: 1
+switch_cost: 15
+estimate_cost: 15
+max_iter: 10
+lcurr: 10
+lstep: 30
+lrprt: 6
+train_size: 600

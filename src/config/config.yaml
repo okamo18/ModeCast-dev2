@@ -1,0 +1,41 @@
+hydra:
+  run:
+    dir: out/logs/${now:%Y-%m-%d} # /${now:%H-%M-%S}
+  sweep:
+    dir: out/logs/${now:%Y-%m-%d}/multirun # /${now:%H-%M-%S}
+    subdir: ${hydra.job.num}
+  job:
+    chdir: False
+  job_logging:
+    version: 1
+    handlers:
+      console:
+        class: logging.StreamHandler
+        stream: ext://sys.stdout
+    formatters:
+      simple:
+        format: '%(message)s'
+
+#  ---------------------------------------  #
+# | model0          : synthetic data      | #
+# | model1 - model4 : motion capture data | #
+#  ---------------------------------------  #
+defaults:
+  - _self_
+  - model: modecast
+
+io:
+  input_dir: ???
+  uuid: ???
+  out_dir: ./out/${io.input_dir}_${io.fn}/streamdmd/lstep_${model.lstep}/lcurr_${model.lcurr}/h_${model.h}/err_th_${model.err_th}/trunc_th_${model.trunc_th}/
+  fn: ???
+
+mlflow:
+  experiment_name: ???
+  user_name: "N.Chihara"
+  source_name: "TSDMD"
+
+dark_mode: False
+viz: False
+save: True
+verbose: False

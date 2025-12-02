@@ -1,0 +1,15 @@
+input_file: "synthetic"
+init_n_rgm: 2
+noise_scale: 0
+h: 2
+window: 3
+svd_threshold: 0.9999
+init_window: 10
+step: 1
+switch_cost: 0.2
+estimate_cost: 0.2
+max_iter: 10
+lcurr: 10
+lstep: 1
+lrprt: 1
+train_size: 1500

@@ -1,0 +1,11 @@
+name: modecast
+h: 10
+err_th: 0.4
+trunc_th: null
+lcurr: 50
+lstep: 5
+lrprt: 1
+train_size: 73
+window: 10
+init_n_rgm: 1
+max_iter: 1000

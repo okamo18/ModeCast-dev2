@@ -1,0 +1,27 @@
+{
+  "[python]": {
+    "editor.tabSize": 4,
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  },
+  "python.analysis.extraPaths": [
+    "./src",
+    "${workspaceFolder}/.venv/lib/python3.9/site-packages",
+  ],
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+  "python.linting.pylintEnabled": false,
+  "python.linting.flake8Enabled": true,
+  "python.linting.flake8Path": "${workspaceFolder}/.venv/bin/flake8",
+  "mypy.enabled": true,
+  "python.linting.mypyPath": "${workspaceFolder}/.venv/bin/mypy",
+  "mypy.dmypyExecutable": "${workspaceFolder}/.venv/bin/dmypy",
+  "python.formatting.provider": "black",
+  "python.formatting.blackPath": "${workspaceFolder}/.venv/bin/black",
+  "isort.path": [
+    "${workspaceFolder}/.venv/bin/isort"
+  ],
+  "autoDocstring.docstringFormat": "numpy",
+  "python.analysis.typeCheckingMode": "basic",
+  "chatgpt.commentCodeLensEnabled": true
+}
