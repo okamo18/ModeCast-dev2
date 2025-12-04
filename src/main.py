@@ -148,6 +148,8 @@ def main(cfg: DictConfig) -> None:
         err_th=cfg.model.err_th,
         trunc_th=cfg.model.trunc_th,
         max_iter=cfg.model.max_iter,
+        use_control=True,    # ★ ここを True に
+        rank=20,
     )
 
     # initializing
