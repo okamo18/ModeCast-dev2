@@ -67,7 +67,7 @@ def main(cfg: DictConfig) -> None:
     # =========================================
     #  DMDc 単体テスト（A, B がちゃんと出るか確認）
     # =========================================
-    dmdc = DMDc(rank=50)  # ランクは適当。あとで調整してOK
+    dmdc = DMDc(rank=20, trunc_th=0.99)  # ランクは適当。あとで調整してOK
     dmdc.fit(X, X_next, Upsilon)
 
     # 最初の1ステップでどれくらい当たってるかを見る
@@ -80,45 +80,48 @@ def main(cfg: DictConfig) -> None:
     print(f"[DMDc test] one-step prediction error (norm) = {err_one_step:.4e}")
 
 
+        # =========================================
+    #  DMDc multi-step test（正しい 12 次元状態で評価する版）
     # =========================================
-    #  DMDc multi-step test
-    # =========================================
-    T = 50    # 何ステップ先まで見るか（お好みで）
-    t0 = 100  # 予測をスタートする時刻（h 以上、n-T-1 以下にしておく）
+    T = 50                     # 何ステップ先まで見るか
+    d_state = state.shape[0]   # = 12
+    h = cfg.model.h
 
-    # ① 初期の「状態ウィンドウ」と「入力ウィンドウ」を作る
-    # state: (12, n), control: (6, n)
-    # 遅延長 h ステップぶんを縦に並べたベクトルにする
-    x_hist = state[:, t0 - h + 1 : t0 + 1].flatten()      # shape: (12*h,)
-    u_hist = control[:, t0 - h + 1 : t0 + 1].flatten()    # shape: (6*h,)
+    # X の列インデックスでスタート位置を決める
+    k0 = 50  # 0 <= k0 <= X.shape[1] - T - 1 の範囲ならOK
 
-    preds = []  # 各ステップの「最新状態」だけを貯める
+    # 初期のウィンドウ（長さ 12*h）
+    x_hist = X[:, k0].copy()
+    u_hist = Upsilon[:, k0].copy()
+
+    preds = np.zeros((d_state, T))
 
     for t in range(T):
-        # ② 1ステップ先の「ウィンドウ全体」を予測
-        x_hist_next = dmdc.step(x_hist, u_hist)  # shape: (12*h,)
+        # 1ステップ先のウィンドウ全体を予測
+        x_hist = dmdc.step(x_hist, u_hist)   # shape: (12*h,)
 
-        # ③ そのウィンドウの一番新しい状態（最後の12要素）を抜き出す
-        x_new = x_hist_next[-12:]
-        preds.append(x_new)
+        # ウィンドウを (12, h) に戻して「一番新しい時刻」の 12 次元だけ抜く
+        x_mat = x_hist.reshape(d_state, h)
+        x_new = x_mat[:, -1]                 # 最後の列が最新状態
+        preds[:, t] = x_new
 
-        # ④ 次のステップ用にウィンドウを更新
-        #    「古い1ステップ分(先頭12)を捨てて、末尾に x_new をくっつける」
-        x_hist = np.hstack([x_hist[12:], x_new])
+        # 入力ウィンドウも次の列で更新（teacher forcing）
+        if k0 + t + 1 < Upsilon.shape[1]:
+            u_hist = Upsilon[:, k0 + t + 1].copy()
 
-        # 入力も同様に「1ステップずらしたウィンドウ」に更新
-        #   → ここでは真の control から取ってくる
-        u_window = control[:, t0 - h + 2 + t : t0 + 2 + t]  # 次の h ステップ分
-        u_hist = u_window.flatten()
+    # 真の将来状態も X_next から同じように取り出す
+    true_future = np.zeros((d_state, T))
+    for t in range(T):
+        true_mat = X_next[:, k0 + t].reshape(d_state, h)
+        true_future[:, t] = true_mat[:, -1]
 
-    preds = np.stack(preds, axis=1)  # shape: (12, T)
-
-    # ⑤ 真の状態（12次元）との RMSE を計算
-    true_future = state[:, t0 + 1 : t0 + 1 + T]  # shape: (12, T)
-
-    from src.utils.metrics import rmse
     err_multi = rmse(true_future, preds)
     print(f"[DMDc test] multi-step RMSE (T={T}) = {err_multi:.4e}")
+    print(f"first pred (rank={dmdc.rank}):", preds[:, 0])
+    print("first true:", true_future[:, 0])
+
+
+
 
     # ここで一旦終了して、後続の TSDMD/ModeCast はスキップ
     return 

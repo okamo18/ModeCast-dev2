@@ -1,6 +1,7 @@
 import numpy as np
 
 from src.module.dmd import DMD
+#from src.module.dmdc import DMDc
 
 
 class Regime(DMD):
