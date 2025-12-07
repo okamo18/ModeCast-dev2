@@ -15,6 +15,7 @@ from src.module.dmdc import DMDc
 from src.utils.preprocessor import create_variables, standardize ,create_variables_dmdc
 from src.utils.visualizer import viz_snapshot
 
+TEST_DMDC_ONLY = False  # DMDc 単体テストモードかどうか
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
 def main(cfg: DictConfig) -> None:
@@ -63,74 +64,72 @@ def main(cfg: DictConfig) -> None:
 
     X, X_next, Upsilon = create_variables_dmdc(state, control, h=h)
     
-
-    # =========================================
-    #  DMDc 単体テスト（A, B がちゃんと出るか確認）
-    # =========================================
-    dmdc = DMDc(rank=20, trunc_th=0.99)  # ランクは適当。あとで調整してOK
-    dmdc.fit(X, X_next, Upsilon)
-
-    # 最初の1ステップでどれくらい当たってるかを見る
-    x0 = X[:, 0]
-    u0 = Upsilon[:, 0]
-    x1_true = X_next[:, 0]
-    x1_pred = dmdc.step(x0, u0)
-
-    err_one_step = np.linalg.norm(x1_true - x1_pred)
-    print(f"[DMDc test] one-step prediction error (norm) = {err_one_step:.4e}")
-
-
+    
+    if TEST_DMDC_ONLY:
         # =========================================
-    #  DMDc multi-step test（正しい 12 次元状態で評価する版）
-    # =========================================
-    T = 50                     # 何ステップ先まで見るか
-    d_state = state.shape[0]   # = 12
-    h = cfg.model.h
+        #  DMDc 単体テスト（A, B がちゃんと出るか確認）
+        # =========================================
+        dmdc = DMDc(rank=20, trunc_th=0.99)  # ランクは適当。あとで調整してOK
+        dmdc.fit(X, X_next, Upsilon)
 
-    # X の列インデックスでスタート位置を決める
-    k0 = 50  # 0 <= k0 <= X.shape[1] - T - 1 の範囲ならOK
+        # 最初の1ステップでどれくらい当たってるかを見る
+        x0 = X[:, 0]
+        u0 = Upsilon[:, 0]
+        x1_true = X_next[:, 0]
+        x1_pred = dmdc.step(x0, u0)
 
-    # 初期のウィンドウ（長さ 12*h）
-    x_hist = X[:, k0].copy()
-    u_hist = Upsilon[:, k0].copy()
-
-    preds = np.zeros((d_state, T))
-
-    for t in range(T):
-        # 1ステップ先のウィンドウ全体を予測
-        x_hist = dmdc.step(x_hist, u_hist)   # shape: (12*h,)
-
-        # ウィンドウを (12, h) に戻して「一番新しい時刻」の 12 次元だけ抜く
-        x_mat = x_hist.reshape(d_state, h)
-        x_new = x_mat[:, -1]                 # 最後の列が最新状態
-        preds[:, t] = x_new
-
-        # 入力ウィンドウも次の列で更新（teacher forcing）
-        if k0 + t + 1 < Upsilon.shape[1]:
-            u_hist = Upsilon[:, k0 + t + 1].copy()
-
-    # 真の将来状態も X_next から同じように取り出す
-    true_future = np.zeros((d_state, T))
-    for t in range(T):
-        true_mat = X_next[:, k0 + t].reshape(d_state, h)
-        true_future[:, t] = true_mat[:, -1]
-
-    err_multi = rmse(true_future, preds)
-    print(f"[DMDc test] multi-step RMSE (T={T}) = {err_multi:.4e}")
-    print(f"first pred (rank={dmdc.rank}):", preds[:, 0])
-    print("first true:", true_future[:, 0])
+        err_one_step = np.linalg.norm(x1_true - x1_pred)
+        print(f"[DMDc test] one-step prediction error (norm) = {err_one_step:.4e}")
 
 
+            # =========================================
+        #  DMDc multi-step test（正しい 12 次元状態で評価する版）
+        # =========================================
+        T = 50                     # 何ステップ先まで見るか
+        d_state = state.shape[0]   # = 12
+        h = cfg.model.h
 
+        # X の列インデックスでスタート位置を決める
+        k0 = 50  # 0 <= k0 <= X.shape[1] - T - 1 の範囲ならOK
 
-    # ここで一旦終了して、後続の TSDMD/ModeCast はスキップ
-    return 
+        # 初期のウィンドウ（長さ 12*h）
+        x_hist = X[:, k0].copy()
+        u_hist = Upsilon[:, k0].copy()
+
+        preds = np.zeros((d_state, T))
+
+        for t in range(T):
+            # 1ステップ先のウィンドウ全体を予測
+            x_hist = dmdc.step(x_hist, u_hist)   # shape: (12*h,)
+
+            # ウィンドウを (12, h) に戻して「一番新しい時刻」の 12 次元だけ抜く
+            x_mat = x_hist.reshape(d_state, h)
+            x_new = x_mat[:, -1]                 # 最後の列が最新状態
+            preds[:, t] = x_new
+
+            # 入力ウィンドウも次の列で更新（teacher forcing）
+            if k0 + t + 1 < Upsilon.shape[1]:
+                u_hist = Upsilon[:, k0 + t + 1].copy()
+
+        # 真の将来状態も X_next から同じように取り出す
+        true_future = np.zeros((d_state, T))
+        for t in range(T):
+            true_mat = X_next[:, k0 + t].reshape(d_state, h)
+            true_future[:, t] = true_mat[:, -1]
+
+        err_multi = rmse(true_future, preds)
+        print(f"[DMDc test] multi-step RMSE (T={T}) = {err_multi:.4e}")
+        print(f"first pred (rank={dmdc.rank}):", preds[:, 0])
+        print("first true:", true_future[:, 0])
+        # ここで一旦終了して、後続の TSDMD/ModeCast はスキップ
+        return 
 
     
 
 
     X_train = X[:, : n_est - h + 1]
     Y_train = X_next[:, : n_est - h + 1]
+    Upsilon_train = Upsilon[:, : n_est - h + 1]
 
     show_input(logger, data)
     if cfg.dark_mode:
@@ -148,12 +147,12 @@ def main(cfg: DictConfig) -> None:
         err_th=cfg.model.err_th,
         trunc_th=cfg.model.trunc_th,
         max_iter=cfg.model.max_iter,
-        use_control=True,    # ★ ここを True に
+        use_control=False,    # ★ ここを True に
         rank=20,
     )
 
     # initializing
-    regime_storage = tsdmd.initialize(X_train, Y_train)
+    regime_storage = tsdmd.initialize(X_train, Y_train, Upsilon_train)
 
     # forecasting
     s_st = n_est - lstep - lcurr + 1
@@ -165,9 +164,67 @@ def main(cfg: DictConfig) -> None:
         tc = tm + lcurr
         tf = tm + lcurr + lstep - 1
         te = tm + lcurr + lstep + lrprt - 1
+
+        # mdb にはこれまで通り「生時系列側のインデックス」で渡す
         mdb.set_params(tm=tm + h - 1, tc=tc, tf=tf, te=te)
-        Xc = X[:, tm : tc - h + 1]
-        regime_storage, mdb = tsdmd.forecast(Xc, regime_storage, mdb)
+
+        # -----------------------------
+        # 1. 状態ウィンドウ Xc （今まで通り）
+        # -----------------------------
+        Xc = X[:, tm : tc - h + 1]   # shape: (d*h, lcurr-h+1)
+
+        # -----------------------------
+        # 2. 制御ウィンドウ Upsilon_c（現在区間）
+        #    ※ use_control=False のときは None のままで OK
+        # -----------------------------
+        if tsdmd.use_control:
+            Upsilon_c = Upsilon[:, tm : tc - h + 1]  # Xc と同じ列を取る
+        else:
+            Upsilon_c = None
+
+        # -----------------------------
+        # 3. 将来区間の制御 Upsilon_future を用意
+        #    length = lstep + lrprt - 1 ステップぶんの遷移で使う入力列
+        #    Regime.predict(with_initial=True) は
+        #      - 出力列数 : length
+        #      - 使う u の本数 : length-1
+        # -----------------------------
+        length = lstep + lrprt - 1
+
+        if tsdmd.use_control:
+            # X の列インデックスで「次のウィンドウ」の位置からスタート
+            #   Xc の最後の列 index = (tc - h)
+            #   その次の列 = (tc - h + 1)
+            start_u = tc - h + 1
+            end_u = start_u + (length - 1)
+
+            # 念のため安全のためにクリップしておく（はみ出たぶんは Regime 側で u=0 フォールバック）
+            max_cols = Upsilon.shape[1]
+            if end_u > max_cols:
+                end_u = max_cols
+
+            if start_u < end_u:
+                Upsilon_future = Upsilon[:, start_u:end_u]
+            else:
+                # もし範囲がおかしければゼロ入力にフォールバック
+                Upsilon_future = None
+        else:
+            Upsilon_future = None
+
+        # -----------------------------
+        # 4. TSDMD でレジーム選択＋将来予測
+        # -----------------------------
+        regime_storage, mdb = tsdmd.forecast(
+            Xc,
+            regime_storage,
+            mdb,
+            Upsilon_c=Upsilon_c,
+            Upsilon_future=Upsilon_future,
+        )
+
+        # -----------------------------
+        # 5. 誤差計算はこれまで通り
+        # -----------------------------
         err_c = rmse(mdb.Xc, mdb.Vc)
         err_f = rmse(data_state[:, tf:te], mdb.Vf[:, lstep - 1 :])
 
@@ -177,8 +234,19 @@ def main(cfg: DictConfig) -> None:
 
         show_snapshot_info(logger, mdb)
 
-        fig = viz_snapshot(data_state, np.hstack([mdb.Vc, mdb.Vf]).T, h, tm, tc, tf, te, err_c, show=cfg.viz)
+        fig = viz_snapshot(
+            data_state,
+            np.hstack([mdb.Vc, mdb.Vf]).T,
+            h,
+            tm,
+            tc,
+            tf,
+            te,
+            err_c,
+            show=cfg.viz,
+        )
         ioh.savefig(fig, f"snapshot/[{tm} : {tf+lrprt}] fit.png")
+
 
     show_metrics(
         logger=logger,
