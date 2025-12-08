@@ -16,7 +16,7 @@ from src.module.dmdc import DMDc
 from src.utils.preprocessor import create_variables, standardize ,create_variables_dmdc
 from src.utils.visualizer import viz_snapshot
 
-TEST_DMDC_ONLY = True  # DMDc 単体テストモードかどうか
+
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
 def main(cfg: DictConfig) -> None:
@@ -66,81 +66,84 @@ def main(cfg: DictConfig) -> None:
     X, X_next, Upsilon = create_variables_dmdc(state, control, h=h)
     
     
-    if TEST_DMDC_ONLY:
-        # =========================================
-        #  グローバル DMDc / DMD 素朴比較
-        # =========================================
-        d_state = state.shape[0]      # = 12
-        h = cfg.model.h
-        k0 = 50                       # 開始位置（適宜変えてOK）
-        T = 50                        # 予測ステップ数
-        
-        # X_next の列数チェック（はみ出さないように）
-        assert k0 + T < X_next.shape[1], "k0 + T がデータ長を超えています"
+    # =========================================
+    #  グローバル DMD / DMDc 比較（案A）
+    # =========================================
+    DO_GLOBAL_COMPARE = False  # ← 終わったら False にしてもいい
 
-        # -------------------------------
-        # 真の将来状態（12次元）の取り出し
-        # -------------------------------
+    if DO_GLOBAL_COMPARE:
+
+
+        d_state = state.shape[0]   # 12
+        h = cfg.model.h           # 遅延長は config と合わせる
+        T = 50
+        k0 = 50                   # 予測スタート位置（とりあえず固定）
+
+        # 共通の遅延埋め込み（状態+入力）
+        X, X_next, Upsilon = create_variables_dmdc(state, control, h=h)
+
+        # 真の将来状態（12次元）だけを取り出す
         true_future = np.zeros((d_state, T))
         for t in range(T):
-            # X_next[:, k0 + t] は「ウィンドウ全体」（12*h 次元）
-            x_mat_true = X_next[:, k0 + t].reshape(d_state, h)
-            true_future[:, t] = x_mat_true[:, -1]  # 最後の列が「最新の状態」
+            true_mat = X_next[:, k0 + t].reshape(d_state, h)
+            true_future[:, t] = true_mat[:, -1]
 
-        # ===============================
-        # 1. グローバル DMDc
-        # ===============================
-        dmdc = DMDc(rank=20, trunc_th=cfg.model.trunc_th)
-        dmdc.fit(X, X_next, Upsilon)
+        # ---------------- DMDc: rank を変えながら ----------------
+        rank_list = [5, 10, 15, 20, 50]
 
-        # 初期ウィンドウ
-        x_hist = X[:, k0].copy()          # (12*h,)
-        u_hist = Upsilon[:, k0].copy()    # (6*h,)
+        for rank in rank_list:
+            dmdc = DMDc(rank=rank, trunc_th=0.99)
+            dmdc.fit(X, X_next, Upsilon)
 
-        preds_dmdc = np.zeros((d_state, T))
+            # 初期ウィンドウ（12*h 次元）
+            x_hist = X[:, k0].copy()
+            u_hist = Upsilon[:, k0].copy()
 
-        for t in range(T):
-            # 1ステップ先のウィンドウ全体を予測
-            x_hist = dmdc.step(x_hist, u_hist)      # (12*h,)
+            preds_c = np.zeros((d_state, T))
 
-            # (12, h) に戻して「最新1ステップ」だけ抜く
-            x_mat = x_hist.reshape(d_state, h)
-            preds_dmdc[:, t] = x_mat[:, -1]
+            for t in range(T):
+                # 1ステップ先のウィンドウ全体を予測
+                x_hist = dmdc.step(x_hist, u_hist)       # (12*h,)
 
-            # 入力ウィンドウは teacher forcing で真値から更新
-            if k0 + t + 1 < Upsilon.shape[1]:
-                u_hist = Upsilon[:, k0 + t + 1].copy()
+                # (12, h) に reshape して最後の列＝最新状態を取り出す
+                x_mat = x_hist.reshape(d_state, h)
+                x_new = x_mat[:, -1]
+                preds_c[:, t] = x_new
 
-        err_dmdc = rmse(true_future, preds_dmdc)
-        print(f"[GLOBAL DMDc] multi-step RMSE (T={T}) = {err_dmdc:.4e}")
-        print("  first pred (DMDc):", preds_dmdc[:, 0])
-        print("  first true      :", true_future[:, 0])
+                # teacher forcing で入力も1ステップ先に進める
+                if k0 + t + 1 < Upsilon.shape[1]:
+                    u_hist = Upsilon[:, k0 + t + 1].copy()
 
-        # ===============================
-        # 2. グローバル DMD（制御なし）
-        # ===============================
-        dmd = DMD(trunc_th=cfg.model.trunc_th)
+            err_c = rmse(true_future, preds_c)
+            print(
+                f"[GLOBAL DMDc] h={h}, rank={rank}, "
+                f"multi-step RMSE (T={T}) = {err_c:.4e}"
+            )
+            print("  first pred (DMDc):", preds_c[:, 0])
+            print("  first true      :", true_future[:, 0])
+
+        # ---------------- DMD: 1 回だけ ----------------
+        dmd = DMD(trunc_th=0.99)
         dmd.fit(X, X_next)
 
-        # DMD.predict は「ウィンドウ状態列」を返す想定
-        # length=T+1, with_initial=True にして
-        #   col 0: 初期 X[:, k0]
-        #   col t: k0 から t ステップ進んだウィンドウ
-        X_seq = dmd.predict(X[:, k0], length=T + 1, with_initial=True)  # (12*h, T+1)
+        # DMD の予測は X のウィンドウ全体（12*h 次元）で返ってくる前提
+        X_seq = dmd.predict(X[:, k0], n=T + 1, with_initial=True)  # (12*h, T+1)
 
-        preds_dmd = np.zeros((d_state, T))
+        preds_d = np.zeros((d_state, T))
         for t in range(T):
-            x_win = X_seq[:, t + 1]                   # 1ステップ先から順に
-            x_mat = x_win.reshape(d_state, h)
-            preds_dmd[:, t] = x_mat[:, -1]
+            x_mat = X_seq[:, t + 1].reshape(d_state, h)  # t+1 が 1ステップ先
+            preds_d[:, t] = x_mat[:, -1]
 
-        err_dmd = rmse(true_future, preds_dmd)
-        print(f"[GLOBAL DMD ] multi-step RMSE (T={T}) = {err_dmd:.4e}")
-        print("  first pred (DMD):", preds_dmd[:, 0])
+        err_d = rmse(true_future, preds_d)
+        print(
+            f"[GLOBAL DMD ] h={h}, multi-step RMSE (T={T}) = {err_d:.4e}"
+        )
+        print("  first pred (DMD):", preds_d[:, 0])
         print("  first true      :", true_future[:, 0])
 
-        # ここで終了：TSDMD / Regime には入らない
+        # ここで一旦終了（TSDMD / ModeCast 本体は動かさない）
         return
+
     
 
 
@@ -165,7 +168,7 @@ def main(cfg: DictConfig) -> None:
         trunc_th=cfg.model.trunc_th,
         max_iter=cfg.model.max_iter,
         use_control=False,    # ★ ここを True に
-        rank=20,
+        rank=10,
     )
 
     # initializing
