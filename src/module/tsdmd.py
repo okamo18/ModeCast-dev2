@@ -131,6 +131,8 @@ class TSDMD:
             Xc=Xc,
             rgm_c_idx=self.rgm_c_idx,
             err_th=self.err_th,
+            # ★ 制御付き NLDS にも入力を渡す
+            Upsilon_c=Upsilon_c,
         )
 
         # -----------------------------
@@ -161,10 +163,17 @@ class TSDMD:
                 new_rgm.fit(Xc[:, :-1], Xc[:, 1:])
 
             # NLDS で「そのレジームでどれくらい再現できるか」を評価
-            nlds = NLDS(Xc)
+            if self.use_control and (Upsilon_c is not None):
+                # DMDc レジームの場合は入力も使って評価
+                nlds = NLDS(Xc, Upsilon=Upsilon_c)
+            else:
+                # 従来どおり制御なしで評価
+                nlds = NLDS(Xc)
+
             nlds.fit_X0(new_rgm)
             new_Vc = nlds.generate(new_rgm, n)
             new_err = rmse(Xc, new_Vc)
+
 
             if new_err < self.err_th:
                 regime_storage.append(new_rgm)

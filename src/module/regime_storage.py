@@ -61,34 +61,70 @@ class RegimeStorage:
         Xc: np.ndarray,
         rgm_c_idx: int,
         err_th: float,
-        Upsilon_c: Optional[np.ndarray] = None,  # ★ 追加：入力ウィンドウ（今は未使用）
+        Upsilon_c: Optional[np.ndarray] = None,
     ) -> Tuple[Regime, np.ndarray, float]:
         """
-        Xc        : (dxh, n)   現在の状態ウィンドウ列
-        Upsilon_c : (duxh, n)  現在の入力ウィンドウ列（DMDc のときに使う予定）
+        Xc        : (dxh, n)         現在の状態ウィンドウ列
+        rgm_c_idx : 現在採用中レジームのインデックス
+        err_th    : しきい値
+        Upsilon_c : (duxh, n) or None  現在の入力ウィンドウ列（DMDc 用）
+
+        ここで NLDS(Xc, Upsilon_c) を使うことで、
+        - DMD   : use_control=False → U を無視
+        - DMDc  : use_control=True  → U を使って生成
+        の両方に対応する。
         """
         n = Xc.shape[1]
+        # ★ 追加：制御あり/なしでの誤差を比べてみる（デバッグ用）
+        # 制御なし
+        nlds_no_u = NLDS(Xc, Upsilon=None)
+        rgm = self[rgm_c_idx]
+        nlds_no_u.fit_X0(rgm)
+        Vc_no_u = nlds_no_u.generate(rgm, n)
+        err_no_u = rmse(Xc, Vc_no_u)
+
+        # 制御あり（Upsilon_c があれば）
+        if Upsilon_c is not None:
+            nlds_u = NLDS(Xc, Upsilon=Upsilon_c)
+            nlds_u.fit_X0(rgm)
+            Vc_u = nlds_u.generate(rgm, n)
+            err_u = rmse(Xc, Vc_u)
+            print(f"[DEBUG] rgm={rgm_c_idx}, err_no_u={err_no_u:.3f}, err_u={err_u:.3f}")
+        else:
+            print(f"[DEBUG] rgm={rgm_c_idx}, err_no_u={err_no_u:.3f}, no Upsilon_c")
+
+        # ★ ここが肝：NLDS に Upsilon_c も渡す
+        nlds = NLDS(Xc, Upsilon=Upsilon_c)
+
+        # まず「今のレジーム」で試す
         rgm_c = self[rgm_c_idx]
-
-        # ★ 今の段階では Upsilon_c は使わず、既存どおり NLDS + DMD だけ
-        nlds = NLDS(Xc)
         nlds.fit_X0(rgm_c)
-        Vc = nlds.generate(rgm_c, n)
-        err = rmse(Xc, Vc)
-        if err < err_th:
-            return rgm_c, Vc, err
+        Vc_now = nlds.generate(rgm_c, n)
+        err_now = rmse(Xc, Vc_now)
 
-        cand_regime = None
+        if err_now < err_th:
+            # 現在レジームで十分ならそのまま返す
+            return deepcopy(rgm_c), Vc_now, err_now
+
+        # しきい値を超えたときは、全レジームの中から最小誤差を探す
+        cand_regime: Optional[Regime] = None
+        best_Vc: Optional[np.ndarray] = None
         min_err = np.inf
+
         for regime in self:
             nlds.fit_X0(regime)
-            Vc = nlds.generate(regime, n)
-            err = rmse(Xc, Vc)
-            if err < min_err:
+            Vc_reg = nlds.generate(regime, n)
+            err_reg = rmse(Xc, Vc_reg)
+            if err_reg < min_err:
                 cand_regime = regime
-                min_err = err
+                min_err = err_reg
+                best_Vc = Vc_reg
+
         assert cand_regime is not None
-        return deepcopy(cand_regime), Vc, min_err
+        assert best_Vc is not None
+
+        return deepcopy(cand_regime), best_Vc, min_err
+
 
 
 
